@@ -26,8 +26,12 @@ if [ ! -f "${ntp_class_manifests}init.pp" ]; then
     cp /usr/share/puppet-opestack-newton/puppet-openstack/common/ntp/init.pp "${ntp_class_manifests}"
 fi
 
-echo "node '${1}' { include ntp }" > "${nodes}${1}.pp"
+if [ ! -d "${nodes}nodes" ];then
+    mkdir "${nodes}nodes"
+fi
+
+echo "node '${1}' { include ntp }" > "${nodes}nodes/${1}.pp"
 if [ $(cat "${nodes}site.pp" | egrep -v "^#" | grep "${1}" | wc -l) -eq 0 ] ; then
-    echo "import \"${1}.pp\"" >> "${nodes}site.pp"
+    echo "import \"nodes/${1}.pp\"" >> "${nodes}site.pp"
 fi
 puppet kick "${1}"

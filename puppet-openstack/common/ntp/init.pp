@@ -12,5 +12,6 @@ class ntp {
 
   service { 'ntpd':
     ensure => running,
+    enabled => true,
   }
 }
