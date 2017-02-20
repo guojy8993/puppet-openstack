@@ -7,7 +7,9 @@
 > ntp server以及ntp client服务器的ntp.conf配置略有不同,参考模板配置文件
 
 ```
-官方说明: We recommend that you configure the controller node to reference more accurate (lower stratum) servers and other nodes to reference the controller node.
+官方说明: We recommend that you configure the controller node to reference 
+          more accurate (lower stratum) servers and other nodes to reference
+	  the controller node.
 ```
 
 #### 本模块的使用说明
