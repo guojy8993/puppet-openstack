@@ -7,7 +7,7 @@ rdo_modules="/etc/puppet/modules/"
 
 if [ $(ls -l ${rdo_modules} | grep rdo | wc -l) -eq 0 ]; then
     mkdir -p "${rdo_modules}rdo"
-    cp -r /usr/share/puppet-opestack-newton/puppet-openstack/common/rdo/{manifests,templates,files} "${rdo_modules}rdo/"
+    cp -r /usr/share/puppet-opestack-newton/puppet-openstack/common/rdo/manifests "${rdo_modules}rdo/"
 fi
 
 if [ ! -d "${nodes}nodes" ];then
