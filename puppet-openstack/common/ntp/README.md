@@ -44,5 +44,6 @@ sh /usr/share/puppet-opestack-newton/puppet-openstack/common/ntp/install_ntp \
 
 [集群NTP设置](https://docs.openstack.org/newton/install-guide-rdo/environment-ntp.html)
 [Puppet资源与属性说明](https://docs.puppet.com/puppet/3.8/types/#list-of-resource-types)
+
 [puppet配置kick主动推送](https://docs.puppet.com/puppet/3.8/man/kick.html)
 
