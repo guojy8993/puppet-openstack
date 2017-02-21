@@ -1,0 +1,24 @@
+#! bin/bash
+
+# ${1}: config host
+# ${2}: mysql service ip
+# ${3}: mysql root password
+
+if [ ! -d "/etc/puppet/modules/mysql" ]; then
+    mkdir -p /etc/puppet/modules/mysql
+    cp -r /usr/share/puppet-opestack-newton/puppet-openstack/common/mysql/{files,manifests,templates} /etc/puppet/modules/mysql/
+fi
+
+echo ${2} > "/etc/puppet/modules/mysql/files/mysql-ip"
+echo ${3} > "/etc/puppet/modules/mysql/files/mysql-passwd"
+
+if [ ! -d "/etc/puppet/manifests/nodes" ];then
+    mkdir "/etc/puppet/manifests/nodes"
+fi
+
+echo "node '${1}' { include mysql }" > "/etc/puppet/manifests/nodes/${1}.pp"
+
+if [ $(cat "/etc/puppet/manifests/site.pp" | egrep -v "^#" | grep "${1}" | wc -l) -eq 0 ] ; then
+    echo "import \"nodes/${1}.pp\"" >> "/etc/puppet/manifests/site.pp"
+fi
+puppet kick "${1}"
