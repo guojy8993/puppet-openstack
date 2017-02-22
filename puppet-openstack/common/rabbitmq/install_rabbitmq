@@ -1,0 +1,26 @@
+#! /bin/bash
+
+# ${1}: config node
+# ${2}: rabbit user
+# ${3}: rabbit passwd
+
+PP_Rabbit="/etc/puppet/modules/rabbitmq"
+PP_MANIFESTS="/etc/puppet/manifests"
+OS_Rabbit="/usr/share/puppet-opestack-newton/puppet-openstack/common/rabbitmq"
+
+if [ ! -d "${PP_Rabbit}" ];then
+    cp -r "${OS_Rabbit}" "${PP_Rabbit}"
+fi
+
+echo "${2}" > "${PP_Rabbit}/files/rabbit-user"
+echo "${3}" > "${PP_Rabbit}/files/rabbit-passwd"
+
+if [ ! -d "${PP_MANIFESTS}/nodes" ];then
+    mkdir "${PP_MANIFESTS}/nodes"
+fi
+
+echo "node '${1}' { include rabbitmq }" > "${PP_MANIFESTS}/nodes/${1}.pp"
+if [ $(cat "${PP_MANIFESTS}/site.pp" | egrep -v "^#" | grep "${1}" | wc -l) -eq 0 ] ; then
+    echo "import \"nodes/${1}.pp\"" >> "${PP_MANIFESTS}/site.pp"
+fi
+puppet kick "${1}"

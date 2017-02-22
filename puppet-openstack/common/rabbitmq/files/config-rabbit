@@ -1,0 +1,18 @@
+#! /bin/bash
+
+systemctl enable rabbitmq-server
+systemctl start rabbitmq-server
+
+rabbit_user=$(cat /tmp/rabbit-user)
+rm -rf /tmp/rabbit-user
+
+rabbit_pass=$(cat /tmp/rabbit-passwd)
+rm -rf /tmp/rabbit-passwd
+
+if [ $(rabbitmqctl list_users | grep ${rabbit_user} | wc -l) -eq 0 ]; then
+    rabbitmqctl add_user "${rabbit_user}" "${rabbit_pass}"
+else
+    rabbitmqctl change_password "${rabbit_user}" "${rabbit_pass}"
+fi
+
+rabbitmqctl set_permissions "${rabbit_user}" ".*" ".*" ".*"
