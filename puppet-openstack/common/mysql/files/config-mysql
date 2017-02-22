@@ -1,14 +1,19 @@
 #! /bin/bash
 
+if [ -f "/tmp/mysql_installed" ];then
+    rm -rf /tmp/{ip,secret}
+    exit 0
+fi
+
 service_ip=$(cat /tmp/ip)
 rm -rf /tmp/ip
 sed "s/%MYSQL_SERVICE_IP%/${service_ip}/g" -i /etc/my.cnf.d/openstack.cnf
 
-systemctl enable mariadb.service
-
 mysql_install_db --user=mysql --datadir=/var/lib/mysql
 systemctl start  mariadb.service
+systemctl enable mariadb.service
 
 passwd=$(cat /tmp/secret)
 rm -rf /tmp/secret
-echo -e "\nY\n${passwd}\n${passwd}\nY\nY\nY\nY\n" | mysql_secure_installation
+mysql -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('${passwd}');"
+touch /tmp/mysql_installed
