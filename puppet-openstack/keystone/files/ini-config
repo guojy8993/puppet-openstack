@@ -1,0 +1,50 @@
+#! /usr/bin/env python
+
+import sys
+import os
+import re
+
+def config(args):
+    target = args[0]
+    if not os.path.exists(target):
+        print "Config file %s not exists !" % target
+        exit(1)
+    
+    area = args[1]
+    in_area = False
+    lino = 0
+    area_start_index = -1
+    item_index = -1
+
+    config_key = args[2]
+    config_value = args[3]
+
+    fd = open(target, "r+")
+    lines = []
+    for line in fd.readlines():
+        lino = lino + 1
+        if in_area and re.match(r"#{0,1}\W{0,}%s\W{0,}=\W{0,}\S+" % config_key, line):
+            tmp = "%s=%s\n" % (config_key, config_value)
+            item_index = lino
+            lines.append(tmp)
+        elif "[%s]" % area in line:
+            in_area = True
+            area_start_index = lino
+            lines.append(line)
+        else:
+            lines.append(line)
+
+    if item_index == -1 and area_start_index >= 0:
+        lines.insert(area_start_index + 1, "%s=%s\n" % (config_key, config_value))
+
+    fd.seek(0)
+    fd.truncate()
+    fd.write("%s" % ("".join(lines)))
+    fd.close()
+
+if __name__ == "__main__":
+    params = sys.argv[1:]
+    if len(params) != 4:
+        print "Usge: ini-config <ini file> <area> <key> <value>"
+        exit(1)
+    config(params)

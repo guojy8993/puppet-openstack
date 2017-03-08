@@ -1,0 +1,36 @@
+#! /bin/bash
+
+demo_passwd=$(cat /tmp/demo_passwd)
+keystone_host="$(cat /tmp/host)"
+
+source /root/keystone_admin
+
+if [ $(openstack project list|awk '{print $4}'|egrep -v "^$"|grep -v Name|grep service|wc -l) -eq 0 ];then
+    openstack project create --domain default --description "Service Project" service
+fi
+
+if [ $(openstack project list|awk '{print $4}'|egrep -v "^$"|grep -v Name|grep demo|wc -l) -eq 0 ];then
+    openstack project create --domain default --description "Demo Project" demo
+fi
+
+if [ $(openstack user list|awk '{print $4}'|grep -v Name|egrep -v "^$"|grep demo|wc -l) -eq 0 ];then
+    openstack user create --domain default --password ${demo_passwd} demo
+fi
+
+user_role=$(openstack role list|grep user)
+if [ "${user_role}" == "" ];then
+    openstack role create user
+fi
+
+openstack role add --project demo --user demo user
+
+cat > /root/keystone_demo << EOF
+export OS_USERNAME=demo
+export OS_PASSWORD=${demo_passwd}
+export OS_PROJECT_NAME=demo
+export OS_USER_DOMAIN_NAME=Default
+export OS_PROJECT_DOMAIN_NAME=Default
+export OS_AUTH_URL=http://${keystone_host}:35357/v3
+export OS_IDENTITY_API_VERSION=3
+export OS_IMAGE_API_VERSION=2
+EOF

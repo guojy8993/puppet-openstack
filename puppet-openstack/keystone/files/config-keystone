@@ -1,0 +1,23 @@
+#! /bin/bash
+
+mysql_host=$(cat /tmp/mysql_host_ip)
+keystone_passwd=$(cat /tmp/mysql_keystone_passwd)
+dash_admin_pass=$(cat /tmp/dashboard-admin-pass)
+
+if [ ! -f "/etc/keystone/keystone.conf.backup" ]; then
+    cp /etc/keystone/keystone.conf /etc/keystone/keystone.conf.backup
+fi
+/usr/bin/ini-config /etc/keystone/keystone.conf database connection mysql+pymysql://keystone:${keystone_passwd}@${mysql_host}/keystone
+
+/usr/bin/ini-config /etc/keystone/keystone.conf token provider fernet
+
+su -s /bin/sh -c "keystone-manage db_sync" keystone >> /tmp/err.log 2>&1
+
+keystone-manage fernet_setup --keystone-user keystone --keystone-group keystone >> /tmp/err.log 2>&1
+keystone-manage credential_setup --keystone-user keystone --keystone-group keystone >> /tmp/err.log 2>&1
+
+keystone-manage bootstrap --bootstrap-password ${dash_admin_pass} \
+                          --bootstrap-admin-url http://${mysql_host}:35357/v3/ \
+                          --bootstrap-internal-url http://${mysql_host}:35357/v3/ \
+                          --bootstrap-public-url http://${mysql_host}:5000/v3/ \
+                          --bootstrap-region-id RegionOne
