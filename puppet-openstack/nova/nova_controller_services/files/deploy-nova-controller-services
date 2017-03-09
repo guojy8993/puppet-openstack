@@ -1,0 +1,96 @@
+#! /bin/bash
+
+mysql_root_passwd=$(cat /tmp/mysql_root_passwd)
+mysql_nova_passwd=$(cat /tmp/mysql_nova_passwd)
+nova_controller=$(cat /tmp/nova_controller)
+nova_user_passwd=$(cat /tmp/nova_user_passwd)
+openstack_rabbit_passwd=$(cat /tmp/openstack_rabbit_passwd)
+nova_controller_ip=$(cat /tmp/nova_controller_ip)
+
+if [ $(mysql -uroot -p${mysql_root_passwd} -e "SHOW DATABASES"|grep nova|wc -l) -eq 0 ];then
+    mysql -uroot -p${mysql_root_passwd} -e "CREATE DATABASE nova" 
+fi
+
+if [ $(mysql -uroot -p${mysql_root_passwd} -e "SHOW DATABASES"|grep nova_api|wc -l) -eq 0 ];then
+    mysql -uroot -p${mysql_root_passwd} -e "CREATE DATABASE nova_api"
+fi
+
+mysql -uroot -p${mysql_root_passwd} -e "GRANT ALL PRIVILEGES ON nova_api.* TO 'nova'@'localhost' IDENTIFIED BY '${mysql_nova_passwd}'"
+mysql -uroot -p${mysql_root_passwd} -e "GRANT ALL PRIVILEGES ON nova_api.* TO 'nova'@'%' IDENTIFIED BY '${mysql_nova_passwd}'"
+mysql -uroot -p${mysql_root_passwd} -e "GRANT ALL PRIVILEGES ON nova_api.* TO 'nova'@'${nova_controller_ip}' IDENTIFIED BY '${mysql_nova_passwd}'"
+
+mysql -uroot -p${mysql_root_passwd} -e "GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'localhost' IDENTIFIED BY '${mysql_nova_passwd}'"
+mysql -uroot -p${mysql_root_passwd} -e "GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'%' IDENTIFIED BY '${mysql_nova_passwd}'"
+mysql -uroot -p${mysql_root_passwd} -e "GRANT ALL PRIVILEGES ON nova.* TO 'nova'@'${nova_controller_ip}' IDENTIFIED BY '${mysql_nova_passwd}'"
+
+source /root/keystone_admin
+if [ $(openstack user list|awk '{print $4}'|grep -v Name|egrep -v "^$"|grep nova|wc -l) -eq 0 ];then
+    openstack user create --domain default --password ${nova_user_passwd} nova
+fi
+openstack role add --project service --user nova admin
+
+if [ $(openstack service list|grep nova|wc -l) -eq 0 ];then
+    openstack service create --name nova --description "OpenStack Compute" compute
+fi
+
+if [ $(openstack endpoint list|grep public|grep compute|wc -l) -eq 0 ];then
+    openstack endpoint create --region RegionOne compute public http://${nova_controller}:8774/v2.1/%\(tenant_id\)s
+fi
+
+if [ $(openstack endpoint list|grep internal|grep compute|wc -l) -eq 0 ];then
+    openstack endpoint create --region RegionOne compute internal http://${nova_controller}:8774/v2.1/%\(tenant_id\)s
+fi
+
+if [ $(openstack endpoint list|grep admin|grep compute|wc -l) -eq 0 ];then
+    openstack endpoint create --region RegionOne compute admin http://${nova_controller}:8774/v2.1/%\(tenant_id\)s
+fi
+
+nova_packages=$(rpm -qa | grep openstack-nova)
+for package in openstack-nova-api openstack-nova-conductor openstack-nova-console openstack-nova-novncproxy openstack-nova-scheduler
+do
+    [[ $(echo ${nova_packages}|grep ${package}|wc -l) -eq 0 ]] && yum install -y ${package}
+done
+
+# CONFIG DB: nova/nova-api
+ini-config /etc/nova/nova.conf DEFAULT enabled_apis osapi_compute,metadata
+ini-config /etc/nova/nova.conf api_database connection mysql+pymysql://nova:${mysql_nova_passwd}@${nova_controller_ip}/nova_api
+ini-config /etc/nova/nova.conf database     connection mysql+pymysql://nova:${mysql_nova_passwd}@${nova_controller_ip}/nova
+
+# CONFIG RABBIT
+ini-config /etc/nova/nova.conf DEFAULT transport_url rabbit://openstack:${openstack_rabbit_passwd}@${nova_controller_ip}
+
+# CONFIG AUTH
+ini-config /etc/nova/nova.conf DEFAULT auth_strategy keystone
+ini-config /etc/nova/nova.conf keystone_authtoken auth_uri http://${nova_controller_ip}:5000
+ini-config /etc/nova/nova.conf keystone_authtoken auth_url http://${nova_controller_ip}:35357
+ini-config /etc/nova/nova.conf keystone_authtoken memcached_servers ${nova_controller_ip}:11211
+ini-config /etc/nova/nova.conf keystone_authtoken auth_type password
+ini-config /etc/nova/nova.conf keystone_authtoken project_domain_name Default
+ini-config /etc/nova/nova.conf keystone_authtoken user_domain_name Default
+ini-config /etc/nova/nova.conf keystone_authtoken project_name service
+ini-config /etc/nova/nova.conf keystone_authtoken username nova
+ini-config /etc/nova/nova.conf keystone_authtoken password ${nova_user_passwd}
+
+# CONFIG MY_IP
+ini-config /etc/nova/nova.conf DEFAULT my_ip ${nova_controller_ip}
+ini-config /etc/nova/nova.conf DEFAULT use_neutron True
+ini-config /etc/nova/nova.conf DEFAULT firewall_driver nova.virt.firewall.NoopFirewallDriver
+
+# CONFIG VNC
+ini-config /etc/nova/nova.conf vnc vncserver_listen ${nova_controller_ip}
+ini-config /etc/nova/nova.conf vnc vncserver_proxyclient_address ${nova_controller_ip}
+
+# CONFIG Glance
+ini-config /etc/nova/nova.conf glance api_servers http://${nova_controller_ip}:9292
+ini-config /etc/nova/nova.conf oslo_concurrency lock_path /var/lib/nova/tmp
+
+# SyncDB: nova*
+su -s /bin/sh -c "nova-manage api_db sync" nova
+su -s /bin/sh -c "nova-manage db sync" nova
+
+# Start&Enable nova* services
+for service in openstack-nova-api openstack-nova-consoleauth openstack-nova-conductor openstack-nova-novncproxy openstack-nova-scheduler
+do
+    systemctl enable ${service}
+    systemctl restart  ${service}
+done
