@@ -1,0 +1,46 @@
+#!/bin/bash
+
+rabbit_host_ip=$(cat /tmp/rabbit_host_ip)
+openstack_rabbit_passwd=$(cat /tmp/openstack_rabbit_passwd)
+keystone_host_ip=$(cat /tmp/keystone_host_ip)
+memcache_host_ip=$(cat /tmp/memcache_host_ip)
+nova_user_passwd=$(cat /tmp/nova_user_passwd)
+current_compute_host=$(cat /tmp/compute_host_ip)
+glance_host_ip=$(cat /tmp/glance_host_ip)
+novnc_proxy_host=$(cat /tmp/novnc_host_ip)
+
+ini-config /etc/nova/nova.conf DEFAULT enabled_apis osapi_compute,metadata
+ini-config /etc/nova/nova.conf DEFAULT transport_url rabbit://openstack:${openstack_rabbit_passwd}@${rabbit_host_ip}
+
+ini-config /etc/nova/nova.conf DEFAULT auth_strategy keystone
+ini-config /etc/nova/nova.conf keystone_authtoken auth_uri http://${keystone_host_ip}:5000
+ini-config /etc/nova/nova.conf keystone_authtoken auth_url http://${keystone_host_ip}:35357
+ini-config /etc/nova/nova.conf keystone_authtoken memcached_servers ${memcache_host_ip}:11211
+ini-config /etc/nova/nova.conf keystone_authtoken auth_type password
+ini-config /etc/nova/nova.conf keystone_authtoken project_domain_name Default
+ini-config /etc/nova/nova.conf keystone_authtoken user_domain_name Default
+ini-config /etc/nova/nova.conf keystone_authtoken project_name service
+ini-config /etc/nova/nova.conf keystone_authtoken username nova
+ini-config /etc/nova/nova.conf keystone_authtoken password ${nova_user_passwd}
+
+ini-config /etc/nova/nova.conf DEFAULT my_ip ${current_compute_host}
+ini-config /etc/nova/nova.conf DEFAULT use_neutron True
+ini-config /etc/nova/nova.conf DEFAULT firewall_driver nova.virt.firewall.NoopFirewallDriver
+
+ini-config /etc/nova/nova.conf vnc enabled True
+ini-config /etc/nova/nova.conf vnc vncserver_listen 0.0.0.0
+ini-config /etc/nova/nova.conf vnc vncserver_proxyclient_address ${current_compute_host}
+ini-config /etc/nova/nova.conf vnc novncproxy_base_url http://${novnc_proxy_host}:6080/vnc_auto.html
+
+ini-config /etc/nova/nova.conf glance api_servers http://${glance_host_ip}:9292
+ini-config /etc/nova/nova.conf oslo_concurrency lock_path /var/lib/nova/tmp
+
+if [ $(egrep -c '(vmx|svm)' /proc/cpuinfo) -eq 0 ];then
+    ini-config /etc/nova/nova.conf libvirt virt_type qemu
+fi
+
+for service in libvirtd openstack-nova-compute
+do
+    systemctl enable ${service}
+    systemctl restart  ${service}
+done
