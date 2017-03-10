@@ -1,0 +1,140 @@
+#! /bin/bash
+
+mysql_root_passwd=$(cat /tmp/mysql_root_passwd)
+mysql_neutron_passwd=$(cat /tmp/mysql_neutron_passwd)
+neutron_controller_ip=$(cat /tmp/neutron_controller_ip)
+neutron_user_passwd=$(cat /tmp/neutron_user_passwd)
+nova_user_passwd=$(cat /tmp/nova_user_passwd)
+openstack_rabbit_passwd=$(cat /tmp/openstack_rabbit_passwd)
+rabbit_host_ip=$(cat /tmp/rabbit_host_ip)
+keystone_host_ip=$(cat /tmp/keystone_host_ip)
+memcache_host_ip=$(cat /tmp/memcache_host_ip)
+provider_interface=$(cat /tmp/provider_interface)
+local_overlay_ip=$(cat /tmp/local_overlay_ip)
+nova_metadata_host_ip=$(cat /tmp/nova_metadata_host_ip)
+metadata_secret=$(cat /tmp/metadata_secret)
+
+if [ $(mysql -u"root" -p"${mysql_root_passwd}" -e "SHOW DATABASES"|grep neutron|wc -l) -eq 0 ];then
+    mysql -u"root" -p"${mysql_root_passwd}" -e "CREATE DATABASE neutron"
+fi
+
+mysql -u"root" -p"${mysql_root_passwd}" -e "GRANT ALL PRIVILEGES ON neutron.* TO 'neutron'@'localhost' IDENTIFIED BY '${mysql_neutron_passwd}'"
+mysql -u"root" -p"${mysql_root_passwd}" -e "GRANT ALL PRIVILEGES ON neutron.* TO 'neutron'@'%' IDENTIFIED BY '${mysql_neutron_passwd}'"
+mysql -u"root" -p"${mysql_root_passwd}" -e "GRANT ALL PRIVILEGES ON neutron.* TO 'neutron'@'${neutron_controller_ip}' IDENTIFIED BY '${mysql_neutron_passwd}'"
+
+source /root/keystone_admin
+if [ $(openstack user list|awk '{print $4}'|grep -v Name|egrep -v "^$"|grep neutron|wc -l) -eq 0 ];then
+    openstack user create --domain default --password ${neutron_user_passwd} neutron
+fi
+openstack role add --project service --user neutron admin
+
+if [ $(openstack service list|grep neutron|wc -l) -eq 0 ];then
+    openstack service create --name neutron --description "OpenStack Networking" network
+fi
+
+if [ $(openstack endpoint list|grep public|grep neutron|wc -l) -eq 0 ];then
+    openstack endpoint create --region RegionOne network public http://${neutron_controller_ip}:9696
+fi
+
+if [ $(openstack endpoint list|grep internal|grep neutron|wc -l) -eq 0 ];then
+    openstack endpoint create --region RegionOne network internal http://${neutron_controller_ip}:9696
+fi
+
+if [ $(openstack endpoint list|grep admin|grep neutron|wc -l) -eq 0 ];then
+    openstack endpoint create --region RegionOne network admin http://${neutron_controller_ip}:9696
+fi
+
+# Neutron Networking OPTION 2(provider + selfservice)
+# Refer: https://docs.openstack.org/newton/install-guide-rdo/neutron-controller-install.html
+
+for package in openstack-neutron openstack-neutron-ml2 openstack-neutron-linuxbridge ebtables
+do
+    [ $(rpm -qa | grep ${package} | wc -l) -eq 0 ] && yum install -y ${package}
+done
+
+# CONFIG: neutron-server
+ini-config /etc/neutron/neutron.conf database connection mysql+pymysql://neutron:${mysql_neutron_passwd}@${neutron_controller_ip}/neutron
+ini-config /etc/neutron/neutron.conf DEFAULT core_plugin ml2 
+ini-config /etc/neutron/neutron.conf DEFAULT service_plugins router
+ini-config /etc/neutron/neutron.conf DEFAULT allow_overlapping_ips True
+ini-config /etc/neutron/neutron.conf DEFAULT transport_url rabbit://openstack:${openstack_rabbit_passwd}@${rabbit_host_ip}
+
+ini-config /etc/neutron/neutron.conf DEFAULT auth_strategy keystone
+ini-config /etc/neutron/neutron.conf keystone_authtoken auth_uri http://${keystone_host_ip}:5000
+ini-config /etc/neutron/neutron.conf keystone_authtoken auth_url http://${keystone_host_ip}:35357
+ini-config /etc/neutron/neutron.conf keystone_authtoken memcached_servers ${memcache_host_ip}:11211
+ini-config /etc/neutron/neutron.conf keystone_authtoken auth_type password
+ini-config /etc/neutron/neutron.conf keystone_authtoken project_domain_name Default
+ini-config /etc/neutron/neutron.conf keystone_authtoken user_domain_name Default
+ini-config /etc/neutron/neutron.conf keystone_authtoken project_name service
+ini-config /etc/neutron/neutron.conf keystone_authtoken username neutron
+ini-config /etc/neutron/neutron.conf keystone_authtoken password ${neutron_user_passwd}
+
+ini-config /etc/neutron/neutron.conf DEFAULT notify_nova_on_port_status_changes True
+ini-config /etc/neutron/neutron.conf DEFAULT notify_nova_on_port_data_changes True
+
+ini-config /etc/neutron/neutron.conf nova auth_url http://{keystone_host_ip}:35357
+ini-config /etc/neutron/neutron.conf nova auth_type password
+ini-config /etc/neutron/neutron.conf nova project_domain_name Default
+ini-config /etc/neutron/neutron.conf nova user_domain_name Default
+ini-config /etc/neutron/neutron.conf nova region_name RegionOne
+ini-config /etc/neutron/neutron.conf nova project_name service
+ini-config /etc/neutron/neutron.conf nova username nova
+ini-config /etc/neutron/neutron.conf nova password ${nova_user_passwd}
+ini-config /etc/neutron/neutron.conf oslo_concurrency lock_path /var/lib/neutron/tmp
+
+# CONFIG: ml2
+ini-config /etc/neutron/plugins/ml2/ml2_conf.ini ml2 type_drivers flat,vlan,vxlan
+ini-config /etc/neutron/plugins/ml2/ml2_conf.ini ml2 tenant_network_types vxlan
+ini-config /etc/neutron/plugins/ml2/ml2_conf.ini ml2 mechanism_drivers linuxbridge,l2population
+ini-config /etc/neutron/plugins/ml2/ml2_conf.ini ml2 extension_drivers port_security
+ini-config /etc/neutron/plugins/ml2/ml2_conf.ini ml2_type_flat flat_networks provider
+ini-config /etc/neutron/plugins/ml2/ml2_conf.ini ml2_type_vxlan vni_ranges 10000:12000
+ini-config /etc/neutron/plugins/ml2/ml2_conf.ini securitygroup enable_ipset True
+
+# CONFIG: linux bridge agent
+ini-config /etc/neutron/plugins/ml2/linuxbridge_agent.ini linux_bridge physical_interface_mappings provider:${provider_interface}
+ini-config /etc/neutron/plugins/ml2/linuxbridge_agent.ini vxlan enable_vxlan True
+ini-config /etc/neutron/plugins/ml2/linuxbridge_agent.ini vxlan local_ip ${local_overlay_ip}
+ini-config /etc/neutron/plugins/ml2/linuxbridge_agent.ini vxlan l2_population True
+ini-config /etc/neutron/plugins/ml2/linuxbridge_agent.ini securitygroup enable_security_group True
+ini-config /etc/neutron/plugins/ml2/linuxbridge_agent.ini securitygroup firewall_driver neutron.agent.linux.iptables_firewall.IptablesFirewallDriver
+
+# CONFIG: L3
+ini-config /etc/neutron/l3_agent.ini DEFAULT interface_driver neutron.agent.linux.interface.BridgeInterfaceDriver
+
+# CONFIG: dhcp
+ini-config /etc/neutron/dhcp_agent.ini DEFAULT interface_driver neutron.agent.linux.interface.BridgeInterfaceDriver
+ini-config /etc/neutron/dhcp_agent.ini DEFAULT dhcp_driver neutron.agent.linux.dhcp.Dnsmasq
+ini-config /etc/neutron/dhcp_agent.ini DEFAULT enable_isolated_metadata True
+
+# CONFIG: metadata
+ini-config /etc/neutron/metadata_agent.ini DEFAULT nova_metadata_ip ${nova_metadata_host_ip}
+ini-config /etc/neutron/metadata_agent.ini DEFAULT metadata_proxy_shared_secret ${metadata_secret}
+
+# CONFIG: nova-api
+ini-config /etc/nova/nova.conf neutron url http://${keystone_host_ip}:9696 
+ini-config /etc/nova/nova.conf neutron auth_url http://${keystone_host_ip}:35357
+ini-config /etc/nova/nova.conf neutron auth_type password
+ini-config /etc/nova/nova.conf neutron project_domain_name Default
+ini-config /etc/nova/nova.conf neutron user_domain_name Default
+ini-config /etc/nova/nova.conf neutron region_name RegionOne
+ini-config /etc/nova/nova.conf neutron project_name service
+ini-config /etc/nova/nova.conf neutron username neutron
+ini-config /etc/nova/nova.conf neutron password ${neutron_user_passwd}
+ini-config /etc/nova/nova.conf neutron service_metadata_proxy True
+ini-config /etc/nova/nova.conf neutron metadata_proxy_shared_secret ${metadata_secret}
+
+# ml2 soft link to plugin.ini
+if [ $(ls -l /etc/neutron/plugin.ini|grep "/etc/neutron/plugins/ml2/ml2_conf.ini"|wc -l) -eq 0 ];then
+    ln -s /etc/neutron/plugins/ml2/ml2_conf.ini /etc/neutron/plugin.ini
+fi
+su -s /bin/sh -c "neutron-db-manage --config-file /etc/neutron/neutron.conf \
+                                    --config-file /etc/neutron/plugins/ml2/ml2_conf.ini upgrade head" neutron
+systemctl restart openstack-nova-api
+for service in neutron-server neutron-linuxbridge-agent \
+               neutron-dhcp-agent neutron-l3-agent neutron-metadata-agent
+do
+    systemctl enable ${service}
+    systemctl restart ${service} 
+done
